@@ -137,7 +137,19 @@ fi
 
 dl_adg() {
 logger -t "AdGuardHome" "下载AdGuardHome"
-#curl -k -s -o /tmp/AdGuardHome/AdGuardHome --connect-timeout 10 --retry 3 https://ghproxy.com/https://github.com/vipshmily/OutSide/blob/main/AdGuardHome
+adg_url=`nvram get adg_url`
+if [ -n "$adg_url" ]; then
+    logger -t "AdGuardHome" "使用自定义地址下载: $adg_url"
+    curl -k -s -o /tmp/AdGuardHome/AdGuardHome --connect-timeout 10 --retry 3 "$adg_url"
+    if [ -f "/tmp/AdGuardHome/AdGuardHome" ]; then
+        logger -t "AdGuardHome" "AdGuardHome 自定义下载成功。"
+        chmod 777 /tmp/AdGuardHome/AdGuardHome
+        return 0
+    else
+        logger -t "AdGuardHome" "自定地址下载失败，尝试默认地址..."
+    fi
+fi
+
 curl -k -s -o /tmp/AdGuardHome/AdGuardHome --connect-timeout 10 --retry 3 https://fastly.jsdelivr.net/gh/vipshmily/OutSide/AdGuardHome
 if [ ! -f "/tmp/AdGuardHome/AdGuardHome" ]; then
 logger -t "AdGuardHome" "AdGuardHome下载失败，自动切换到备用下载。"

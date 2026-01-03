@@ -495,6 +495,13 @@ function Internetfalse(){
 	</td>
 	</tr><td colspan="4"></td>
 	<tr>
+	<th width="30%" style="border-top: 0 none;">自定义下载源</th>
+	<td style="border-top: 0 none;" colspan="3">
+	<span style="color:#888;">如需自定义下载地址，请在【自定义设置】-【脚本】-【启动后执行】中添加：<br>
+	<code style="color: #000; background-color: #fdd;">nvram set lucky_url="http://your-url/lucky.tar.gz"</code></span>
+	</td>
+	</tr><td colspan="4"></td>
+	<tr>
 	<th width="30%" style="border-top: 0 none;">额外参数</th>
 	<td style="border-top: 0 none;" colspan="3">
 	<div class="input-append">

@@ -1277,6 +1277,38 @@
 	};
 #endif
 
+#endif
+
+#if defined(APP_UUPLUGIN)
+	struct variable variables_UUPLUGIN[] = {
+			{"uuplugin_enable", "", NULL, EVM_RESTART_UUPLUGIN},
+			{"w_uuplugin", "", NULL, FALSE},
+			{0,0,0,0}
+	};
+#endif
+
+#if defined(APP_V2RAYA)
+	struct variable variables_V2RAYA[] = {
+			{"v2raya_enable", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_address", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_config", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_confdir", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_assetsdir", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_transparent", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_core_hook", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_plugin", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_ipv6", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_log", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_bin", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_v2ray", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_cmd", "", NULL, EVM_RESTART_V2RAYA},
+			{"v2raya_env", "", NULL, EVM_RESTART_V2RAYA},
+			{"scripts.v2raya.toml", "File", NULL, EVM_RESTART_V2RAYA},
+			{"w_v2raya", "", NULL, FALSE},
+			{0,0,0,0}
+	};
+#endif
+
     struct variable variables_DwebConf[] = {
 			{"w_ai", "", NULL, FALSE},
 			{"w_vpn_s", "", NULL, FALSE},
@@ -1461,6 +1493,13 @@
 #if defined(APP_WXSEND)
 		{"WXSEND",		variables_WXSEND},
 #endif
+#if defined(APP_UUPLUGIN)
+		{"UUPLUGIN",		variables_UUPLUGIN},
+#endif
+#if defined(APP_V2RAYA)
+		{"V2RAYA",		variables_V2RAYA},
+#endif
+
 		{"DwebConf",			variables_DwebConf},
 		{"LANGUAGE",			variables_Language},
 		{0,0}
@@ -1513,11 +1552,19 @@
 		{EVM_RESTART_NFSD,		EVT_RESTART_NFSD,		RCN_RESTART_NFSD,	0},
 #endif
 #if defined(APP_MINIDLNA)
-		{EVM_RESTART_DMS,		EVT_RESTART_DMS,		RCN_RESTART_DMS,	0},
+		//{EVM_RESTART_DMS,		EVT_RESTART_DMS,		RCN_RESTART_DMS,	0},
 #endif
+#if defined(APP_UUPLUGIN)
+		{EVM_RESTART_UUPLUGIN,		EVT_RESTART_UUPLUGIN,		RCN_RESTART_UUPLUGIN,	0},
+#endif
+
 #if defined(APP_FIREFLY)
-		{EVM_RESTART_ITUNES,		EVT_RESTART_ITUNES,		RCN_RESTART_ITUNES,	0},
+		//{EVM_RESTART_ITUNES,		EVT_RESTART_ITUNES,		RCN_RESTART_ITUNES,	0},
 #endif
+#if defined(APP_V2RAYA)
+		{EVM_RESTART_V2RAYA,		EVT_RESTART_V2RAYA,		RCN_RESTART_V2RAYA,	0},
+#endif
+
 #if defined(APP_TRMD)
 		{EVM_RESTART_TRMD,		EVT_RESTART_TRMD,		RCN_RESTART_TRMD,	EVM_RESTART_FIREWALL},
 #endif

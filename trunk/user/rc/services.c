@@ -662,6 +662,41 @@ void restart_wxsend(void){
 }
 #endif
 
+#if defined(APP_UUPLUGIN)
+void stop_uuplugin(void){
+	eval("/usr/bin/uuplugin.sh","stop");
+}
+
+void start_uuplugin(void){
+	int uuplugin_enable = nvram_get_int("uuplugin_enable");
+	if ( uuplugin_enable == 1)
+		eval("/usr/bin/uuplugin.sh","start");
+}
+
+void restart_uuplugin(void){
+	stop_uuplugin();
+	start_uuplugin();
+}
+#endif
+
+#if defined(APP_V2RAYA)
+void stop_v2raya(void){
+	eval("/usr/bin/v2raya.sh","stop");
+}
+
+void start_v2raya(void){
+	int v2raya_enable = nvram_get_int("v2raya_enable");
+	if ( v2raya_enable == 1)
+		eval("/usr/bin/v2raya.sh","start");
+}
+
+void restart_v2raya(void){
+	stop_v2raya();
+	start_v2raya();
+}
+#endif
+
+
 void
 start_httpd(int restart_fw)
 {

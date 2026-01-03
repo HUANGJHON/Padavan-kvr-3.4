@@ -1230,6 +1230,18 @@ handle_notifications(void)
 			restart_itunes();
 		}
 #endif
+#if defined(APP_UUPLUGIN)
+		else if (strcmp(entry->d_name, RCN_RESTART_UUPLUGIN) == 0)
+		{
+			restart_uuplugin();
+		}
+#endif
+#if defined(APP_V2RAYA)
+		else if (strcmp(entry->d_name, RCN_RESTART_V2RAYA) == 0)
+		{
+			restart_v2raya();
+		}
+#endif
 #if defined(APP_TRMD)
 		else if (strcmp(entry->d_name, RCN_RESTART_TRMD) == 0)
 		{

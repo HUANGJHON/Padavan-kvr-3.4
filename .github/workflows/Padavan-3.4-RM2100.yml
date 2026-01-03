@@ -1,11 +1,4 @@
-# =====================================================================
-# Padavan 3.4 固件自动编译（私有仓库版本）
-# 说明：
-# 1. 源码直接来自当前私有仓库（actions/checkout）
-# 2. 不再使用 public 目录做任何复制或替换
-# 3. 裁剪（sed + echo）逻辑完整保留，一行不删
-# 4. workflow 只负责构建，不负责修改源码功能
-# =====================================================================
+# 文件名: .github/workflows/build-padavan.yml
 
 name: Build RM2100 Padavan-3.4
 
@@ -13,246 +6,206 @@ on:
   workflow_dispatch:
     inputs:
       production:
-        description: 设置编译的固件型号（空格分隔，需与 configs/templates/*.config 同名）
-        default: "RM2100"
+        description: '设置编译的固件型号, 如果有多个，用空格分隔.'
+        default: 'RM2100'
         required: false
       release:
-        description: 是否发布到 Release（yes / no）
-        default: "yes"
+        description: '是否需要发布到Release? (不发布也可以到Artifacts下载)'
+        default: 'yes'
         required: false
 
 env:
   MHZ: 1100
   TNAME: ${{ github.event.inputs.production }}
+  REPOSITORY_URL: https://github.com/${GITHUB_REPOSITORY}.git
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
-    # ------------------------------------------------------------------
-    # 1. 拉取当前私有仓库源码
-    # ------------------------------------------------------------------
-    - name: 拉取私有仓库源码
-      uses: actions/checkout@main
-
-    # ------------------------------------------------------------------
-    # 2. ccache（加速重复编译）
-    # ------------------------------------------------------------------
-    - name: 启用 ccache
-      uses: hendrikmuhs/ccache-action@main
+    - uses: actions/checkout@main
+    - uses: hendrikmuhs/ccache-action@main
       with:
-        key: ${{ github.event.inputs.production }}-3.4
-
-    # ------------------------------------------------------------------
-    # 3. Go 环境
-    # ------------------------------------------------------------------
-    - name: 安装 Go
-      uses: actions/setup-go@main
+          key: ${{ github.event.inputs.production }}-3.4
+    - uses: actions/setup-go@main
       with:
-        go-version: '1.23'
-        check-latest: true
-        cache: false
-
-    # ------------------------------------------------------------------
-    # 4. Node.js 环境
-    # ------------------------------------------------------------------
-    - name: 安装 Node.js
-      uses: actions/setup-node@main
+          go-version: '1.23'
+          check-latest: true
+          cache: false
+    - uses: actions/setup-node@main
       with:
-        node-version: 22
-        check-latest: true
+          node-version: 22
+          check-latest: true          
 
-    # ------------------------------------------------------------------
-    # 5. 生成版本号
-    # ------------------------------------------------------------------
-    - name: 生成版本信息
+    - name: Generate version number
       run: |
         VERSION=$(TZ='Asia/Shanghai' date +%Y.%m.%d-%H%M)
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "DIR=/opt/rt-n56u" >> $GITHUB_ENV
-        echo "NAME=${TNAME}_3.4_$VERSION" >> $GITHUB_ENV
+        val1=$TNAME
+        echo "NAME=${val1}_3.4_$VERSION" >> $GITHUB_ENV
         echo "TAG=v$VERSION" >> $GITHUB_ENV
 
-    # ------------------------------------------------------------------
-    # 6. 创建目录
-    # ------------------------------------------------------------------
-    - name: 创建目录
+    - name: Create build directories
       run: |
-        sudo mkdir -p /opt/rt-n56u /opt/images
-        sudo chmod -R 777 /opt/rt-n56u /opt/images
-        echo 开始编译时间 > /opt/images/readme.txt
-        TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S' >> /opt/images/readme.txt
+        sudo mkdir -m 777 -p ${{ env.DIR }}
+        sudo mkdir -m 777 -p /opt/images/
+        echo "开始编译时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')" > /opt/images/readme.txt
 
-    # ------------------------------------------------------------------
-    # 7. 安装依赖
-    # ------------------------------------------------------------------
-    - name: 安装编译依赖
+    - name: Prepare environment
       run: |
-        sudo apt update
-        sudo apt install -y \
-          libtool-bin gperf python3-docutils autopoint gettext \
-          ccache liblzma-dev zlib1g-dev automake libtool libltdl-dev
+          sudo apt update
+          sudo apt install libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev zlib1g-dev automake libtool libltdl-dev
 
-    # ------------------------------------------------------------------
-    # 8. 同步源码到 Padavan 编译目录
-    # ------------------------------------------------------------------
-    - name: 同步源码
+    - name: Clone source code
       run: |
-        rsync -a --delete ./ /opt/rt-n56u/
-        cd /opt/rt-n56u
+        git clone --depth=1 $REPOSITORY_URL ${{ env.DIR }}
+        cd ${{ env.DIR }}
         sed -i '/cp -f/d' Makefile
 
-    # ------------------------------------------------------------------
-    # 9. 编译固件（含完整裁剪逻辑）
-    # ------------------------------------------------------------------
-    - name: 编译固件
+    - name: Build Firmware
       run: |
-        cd /opt/rt-n56u/trunk
+        if [ -f public/adguardhome.Makefile ]; then
+            mv -f public/adguardhome.Makefile ${{ env.DIR }}/trunk/user/adguardhome/Makefile
+            echo "AdGuardHome Makefile file copy success"
+        fi
+        cp -f public/RM2100.config ${{ env.DIR }}/trunk/configs/templates/
+        cp -f public/adguardhome.sh ${{ env.DIR }}/trunk/user/adguardhome/
+        
+        cd ${{ env.DIR }}/trunk
 
-        echo "CPU 超频到 ${MHZ} MHz"
+        echo "设置CPU超频到 ${MHZ}MHz"
         clock=$(echo "obase=16 ; ibase=10 ; (((($MHZ/20)-1)*16+2))" | bc)
-        sed -i "554,555s:0xff:0x7ff:g" linux-3.4.x/arch/mips/rt2880/init.c
-        sed -i "554,556s:0xc2:0x$clock:g" linux-3.4.x/arch/mips/rt2880/init.c
+        sed -i "554,555s:0xff:0x7ff:g" ${{ env.DIR }}/trunk/linux-3.4.x/arch/mips/rt2880/init.c
+        sed -i "554,556s:0xc2:0x$clock:g" ${{ env.DIR }}/trunk/linux-3.4.x/arch/mips/rt2880/init.c
 
-        # ---------------- RM2100 存储调整 ----------------
-        sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' configs/boards/RM2100/kernel-3.4.x-5.0.config
-        sed -i 's/size_etc="6M"/size_etc="80M"/g' user/scripts/dev_init.sh
-        sed -i 's/size_tmp="24M"/size_tmp="60M"/g' user/scripts/dev_init.sh
-        sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' user/scripts/mtd_storage.sh
-        # -------------------------------------------------
-
+        echo "正在为 RM2100 修改闪存分区..."
+        sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' ${{ env.DIR }}/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
+        sed -i 's/size_etc="6M"/size_etc="80M"/g' ${{ env.DIR }}/trunk/user/scripts/dev_init.sh
+        sed -i 's/size_tmp="24M"/size_tmp="60M"/g' ${{ env.DIR }}/trunk/user/scripts/dev_init.sh
+        sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' ${{ env.DIR }}/trunk/user/scripts/mtd_storage.sh
+        echo "分区修改完成."
+        
         for m in $TNAME;
         do
-        if [ ! -f configs/templates/$m.config ]; then
-          echo "configs/templates/$m.config not found"
-          exit 1
-        fi
+            echo "开始为型号 [$m] 生成配置文件..."
+            if [ ! -f configs/templates/$m.config ]; then
+                echo "错误: 找不到模板文件 configs/templates/$m.config"
+                exit 1
+            fi
 
-        cp -f configs/templates/$m.config .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+            cp -f configs/templates/$m.config .config
+            
+            # --- 功能定制区域 (删除旧配置) ---
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNS/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_KUMASOCKS/d' .config
+            sed -i '/CONFIG_FIRMWARE_CPU_900MHZ/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SSOBFS/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_V2RAY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_XRAY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_TROJAN/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_KOOLPROXY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_CADDY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_WYY/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_DDNSTO/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_WIREGUARD/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_ALDRIVER/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_MSD_LITE/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_IPERF3/d' .config
+            sed -i '/CONFIG_FIRMWARE_INCLUDE_NAPT66/d' .config
+            
+            # --- 功能定制区域 (写入新配置) ---
+            sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+            echo "CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_SRELAY=n" >> .config
+            echo "CONFIG_FIRMWARE_CPU_900MHZ=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_SSOBFS=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_V2RAY=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_XRAY=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_TROJAN=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_KUMASOCKS=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_KOOLPROXY=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNS=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_CADDY=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_WYY=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_FRPC=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_FRPS=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_DDNSTO=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_MSD_LITE=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_IPERF3=y" >> .config
+            echo "CONFIG_FIRMWARE_INCLUDE_NAPT66=y" >> .config
+            
+            echo "配置文件 [$m.config] 生成完毕."
 
-        ############################################################################################
-        # 因不同型号配置功能不一样，所以先把配置项删除，如果你自己要添加其他的，也要写上删除这一条，切记！！！
-        ############################################################################################
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_SERVER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CLIENT/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CMD/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_KUMASOCKS/d' .config
-        sed -i '/CONFIG_FIRMWARE_CPU_900MHZ/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSOBFS/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_V2RAY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_XRAY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_TROJAN/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_KOOLPROXY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_CADDY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_CADDYBIN/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_WYY/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_WYYBIN/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_DDNSTO/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_WIREGUARD/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALDRIVER/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_MSD_LITE/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_IPERF3/d' .config
-        sed -i '/CONFIG_FIRMWARE_INCLUDE_NAPT66/d' .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+            # 【【【 核心修正 】】】
+            # 1. 切换回项目根目录，这是 make 命令的正确执行位置
+            cd ${{ env.DIR }}
+            
+            # 2. 在根目录执行编译
+            echo "开始在根目录编译型号 [$m]..."
+            sudo make $m
+            
+            # 3. 将编译好的固件移动到输出目录
+            sudo mv -f trunk/images/*.trx /opt/images/
 
-        ######################################################################
-        # 以下选项是定义你需要的功能（y=集成,n=忽略），重新写入到.config文件
-        ######################################################################
-        echo "CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SSSERVER=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_TUNSAFE=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SRELAY=n" >> .config
-        echo "CONFIG_FIRMWARE_CPU_900MHZ=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SSOBFS=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_V2RAY=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_XRAY=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_TROJAN=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_KUMASOCKS=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_KOOLPROXY=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNS=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_CADDY=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_CADDYBIN=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_WYY=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_WYYBIN=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_FRPC=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_FRPS=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_DDNSTO=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_ALDRIVER=n" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_MSD_LITE=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_IPERF3=y" >> .config
-        echo "CONFIG_FIRMWARE_INCLUDE_NAPT66=y" >> .config
-
-        cd /opt/rt-n56u
-        sudo make $m
-        cd /opt/rt-n56u/trunk
-        sudo mv -f images/*.trx /opt/images/
+            # 为了让循环继续，需要再次回到 trunk 目录
+            cd ${{ env.DIR }}/trunk
         done
 
-    # ------------------------------------------------------------------
-    # 10. 收集信息
-    # ------------------------------------------------------------------
-    - name: 收集编译信息
+    - name: Collect artifact information
       run: |
+        echo "完成编译时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')" >> /opt/images/readme.txt
+        echo "" >> /opt/images/readme.txt
+        echo "编译版本信息:" >> /opt/images/readme.txt
+        (cd ${{ env.DIR }} && git log -1) >> /opt/images/readme.txt
+        echo "" >> /opt/images/readme.txt
+        echo "固件MD5校验值:" >> /opt/images/readme.txt
         cd /opt/images
-        echo 完成编译时间 >> readme.txt
-        TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S' >> readme.txt
-        echo >> readme.txt
-        echo 编译版本 >> readme.txt
-        pushd /opt/rt-n56u
-        git log -1 >> /opt/images/readme.txt
-        popd
-        echo >> readme.txt
-        echo md5校验值 >> readme.txt
         for i in *.trx; do
-          mv "$i" "${i%.*}-${{ env.VERSION }}.trx"
+          mv -v "$i" "${i%.*}-${{ env.VERSION }}.trx"
         done
         md5sum *.trx >> readme.txt
+        echo "最终文件列表:"
+        ls -lh
 
-    # ------------------------------------------------------------------
-    # 11. 上传 Artifact
-    # ------------------------------------------------------------------
-    - name: 上传 Artifact
+    - name: Upload images to Artifact
       uses: actions/upload-artifact@main
       with:
         name: ${{ env.NAME }}
-        path: /opt/images
+        path: /opt/images/
 
-    # ------------------------------------------------------------------
-    # 12. 发布 Release
-    # ------------------------------------------------------------------
-    - name: 发布 Release
+    - name: Upload images to Releases
       if: ${{ github.event.inputs.release == 'yes' }}
       uses: softprops/action-gh-release@master
       with:
         name: ${{ env.NAME }}
         tag_name: ${{ env.TAG }}
         body_path: /opt/images/readme.txt
+        draft: false
+        prerelease: false
         files: /opt/images/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
