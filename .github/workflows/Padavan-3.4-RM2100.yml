@@ -74,13 +74,11 @@ jobs:
           
     - name: Clone source code
       run: |
-        # 使用 sudo 复制文件到 /opt 目录
-        sudo cp -r . ${{ env.DIR }}
+        # --- 修复 1: 使用 -af 参数复制，保留软链接和文件属性 ---
+        sudo cp -af . ${{ env.DIR }}
         
-        # --- 关键修复：修改文件权限 ---
-        # 将目录所有权改回当前运行用户，解决 Permission denied 问题
+        # 修改文件权限，防止 Permission denied
         sudo chown -R $USER:$GROUPS ${{ env.DIR }}
-        # ---------------------------
         
         cd ${{ env.DIR }}
         sed -i '/cp -f/d' Makefile
@@ -118,6 +116,11 @@ jobs:
 
         for m in $TNAME;
         do
+        
+        # --- 修复 2: 每次编译前清理目录树，解决 Busybox Config.in 丢失问题 ---
+        sudo ./clear_tree
+        # -------------------------------------------------------------
+        
         if [ ! -f configs/templates/$m.config ] ; then
         echo "configs/templates/$m.config not found "
         exit 0
