@@ -1,11 +1,11 @@
 # =====================================================================
 # Padavan 3.4 固件自动编译（私有仓库版本）
- 
+#
 # 说明：
 # 1. 源码直接来自当前私有仓库（actions/checkout）
 # 2. 不再使用 public 目录做任何复制或替换
-# 3. 裁剪（sed + echo）逻辑完整保留，一行不删
-# 4. workflow 只负责构建，不负责修改源码功能
+# 3. 裁剪（sed + echo）逻辑完整保留
+# 4. 修复 rsync 在 GitHub Actions 中的权限 / 时间戳问题
 # =====================================================================
 
 name: Build RM2100 Padavan-3.4
@@ -38,7 +38,7 @@ jobs:
       uses: actions/checkout@main
 
     # ------------------------------------------------------------------
-    # 2. ccache（加速重复编译）
+    # 2. 启用 ccache
     # ------------------------------------------------------------------
     - name: 启用 ccache
       uses: hendrikmuhs/ccache-action@main
@@ -46,7 +46,7 @@ jobs:
         key: ${{ github.event.inputs.production }}-3.4
 
     # ------------------------------------------------------------------
-    # 3. Go 环境
+    # 3. 安装 Go
     # ------------------------------------------------------------------
     - name: 安装 Go
       uses: actions/setup-go@main
@@ -56,7 +56,7 @@ jobs:
         cache: false
 
     # ------------------------------------------------------------------
-    # 4. Node.js 环境
+    # 4. 安装 Node.js
     # ------------------------------------------------------------------
     - name: 安装 Node.js
       uses: actions/setup-node@main
@@ -65,7 +65,7 @@ jobs:
         check-latest: true
 
     # ------------------------------------------------------------------
-    # 5. 生成版本号
+    # 5. 生成版本信息
     # ------------------------------------------------------------------
     - name: 生成版本信息
       run: |
@@ -86,7 +86,7 @@ jobs:
         TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S' >> /opt/images/readme.txt
 
     # ------------------------------------------------------------------
-    # 7. 安装依赖
+    # 7. 安装编译依赖
     # ------------------------------------------------------------------
     - name: 安装编译依赖
       run: |
@@ -98,9 +98,9 @@ jobs:
     # ------------------------------------------------------------------
     # 8. 同步源码到 Padavan 编译目录
     # ------------------------------------------------------------------
-    - name: 同步源码
+    - name: 同步源码到编译目录
       run: |
-        rsync -a --delete --no-owner --no-group ./ /opt/rt-n56u/
+        rsync -a --delete --no-owner --no-group --no-times ./ /opt/rt-n56u/
         cd /opt/rt-n56u
         sed -i '/cp -f/d' Makefile
 
@@ -123,15 +123,14 @@ jobs:
         sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' user/scripts/mtd_storage.sh
         # -------------------------------------------------
 
-        for m in $TNAME;
-        do
-        if [ ! -f configs/templates/$m.config ]; then
-          echo "configs/templates/$m.config not found"
-          exit 1
-        fi
+        for m in $TNAME; do
+          if [ ! -f configs/templates/$m.config ]; then
+            echo "configs/templates/$m.config 不存在"
+            exit 1
+          fi
 
-        cp -f configs/templates/$m.config .config
-        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+          cp -f configs/templates/$m.config .config
+          sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
 
         ############################################################################################
         # 因不同型号配置功能不一样，所以先把配置项删除，如果你自己要添加其他的，也要写上删除这一条，切记！！！
@@ -216,7 +215,7 @@ jobs:
         done
 
     # ------------------------------------------------------------------
-    # 10. 收集信息
+    # 10. 收集编译信息
     # ------------------------------------------------------------------
     - name: 收集编译信息
       run: |
