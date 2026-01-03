@@ -493,13 +493,13 @@ jobs:
         # 切换到项目根目录进行编译
         cd $SRC_DIR
         
-        # 添加工具链路径到配置
+        # 添加工具链路径到配置（配置已经在上面手动完成，不能用 make $TNAME 否则会覆盖）
         echo "CONFIG_CROSS_COMPILER_ROOT=$SRC_DIR/toolchain-mipsel/toolchain-3.4.x" >> $TRUNK_DIR/.config
         echo "CONFIG_CCACHE=y" >> $TRUNK_DIR/.config
         
-        # 在根目录执行编译 (使用根 Makefile 定义的目标)
+        # 执行编译 (使用 make build，因为配置已手动完成)
         echo "开始编译型号 [$TNAME]..."
-        make $TNAME
+        make build
         
         # 移动编译产物
         sudo mv -f $TRUNK_DIR/images/*.trx /opt/images/
