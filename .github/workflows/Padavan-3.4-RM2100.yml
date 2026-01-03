@@ -15,7 +15,6 @@ on:
 env:
   MHZ: 1100               # CPU超频频率 必须为20的倍数
   TNAME: ${{ github.event.inputs.production }}
-  # REPOSITORY_URL 已移除
          
 jobs:
   build:
@@ -50,10 +49,8 @@ jobs:
         # 版本号,用日期
         VERSION=$(TZ='Asia/Shanghai' date +%Y.%m.%d-%H%M)
         echo "VERSION=$VERSION" >> $GITHUB_ENV
-        # $GITHUB_ENV变量必须要在下一个流程才生效
         echo "DIR=/opt/rt-n56u" >> $GITHUB_ENV
         val1=$TNAME
-        #val2=$(echo $val1 | sed 's/ /-/')
         echo "NAME=${val1}_3.4_$VERSION" >> $GITHUB_ENV
         echo "TAG=v$VERSION" >> $GITHUB_ENV
         ip addr        
@@ -74,10 +71,10 @@ jobs:
           
     - name: Clone source code
       run: |
-        # 使用 -af 参数复制，保留软链接和文件属性，解决 busybox 编译错误
+        # 使用 -af 参数复制，保留软链接和文件属性
         sudo cp -af . ${{ env.DIR }}
         
-        # 修改文件权限，防止 Permission denied
+        # 修改文件权限，确保当前用户有权操作
         sudo chown -R $USER:$GROUPS ${{ env.DIR }}
         
         cd ${{ env.DIR }}
@@ -88,6 +85,16 @@ jobs:
       run: |
         # 直接进入源码目录
         cd ${{ env.DIR }}/trunk
+        
+        ############################################################################################
+        # 核心修复步骤：强制清理 Busybox
+        ############################################################################################
+        # 这里的错误是因为 busybox 处于未清理的脏状态，手动清理以强制重新生成 Config.in
+        if [ -d "user/busybox" ]; then
+          echo "Cleaning Busybox..."
+          make -C user/busybox clean
+        fi
+        ############################################################################################
         
         ############################################################################################
         # CPU 超频逻辑
@@ -103,13 +110,9 @@ jobs:
         # RM2100 Storage Modification (80MB Storage / 60MB Tmp)
         ############################################################################################
         echo "Executing Storage modification for RM2100..."
-        # 1. 修改内核配置：Storage 分区设为 80MB
         sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' ${{ env.DIR }}/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
-        # 2. 修改 dev_init.sh：/etc/storage 空间限制设为 80M
         sed -i 's/size_etc="6M"/size_etc="80M"/g' ${{ env.DIR }}/trunk/user/scripts/dev_init.sh
-        # 3. 修改 dev_init.sh：/tmp 内存临时目录限制设为 60M
         sed -i 's/size_tmp="24M"/size_tmp="60M"/g' ${{ env.DIR }}/trunk/user/scripts/dev_init.sh
-        # 4. 修改 mtd_storage.sh：保存检查大小设为 80MB 的字节数
         sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' ${{ env.DIR }}/trunk/user/scripts/mtd_storage.sh
         echo "Storage modification completed."
         ############################################################################################
