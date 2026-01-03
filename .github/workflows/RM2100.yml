@@ -38,11 +38,10 @@ jobs:
         # 将源码根目录路径存入环境变量，方便后续步骤使用
         echo "SRC_DIR=/opt/$REPO_NAME" >> $GITHUB_ENV
         
-        # 下载预编译工具链
+        # 解压本地预编译工具链 (已包含在仓库中)
         TOOLCHAIN_ROOT=/opt/$REPO_NAME/toolchain-mipsel/toolchain-3.4.x
-        TOOLCHAIN_URL=https://github.com/vipshmily/Padavan-build/releases/download/toolchain/mipsel-linux-uclibc.tar.xz
         mkdir -p $TOOLCHAIN_ROOT
-        curl -fSsLo- $TOOLCHAIN_URL | tar Jx -C $TOOLCHAIN_ROOT
+        tar -Jxf /opt/$REPO_NAME/toolchain-mipsel/mipsel-linux-uclibc.tar.xz -C $TOOLCHAIN_ROOT
         
         mkdir -p /opt/images/
         
@@ -498,8 +497,9 @@ jobs:
         echo "CONFIG_CROSS_COMPILER_ROOT=$SRC_DIR/toolchain-mipsel/toolchain-3.4.x" >> $TRUNK_DIR/.config
         echo "CONFIG_CCACHE=y" >> $TRUNK_DIR/.config
         
-        # 编译固件
-        make -C $TRUNK_DIR
+        # 在根目录执行编译 (使用根 Makefile 定义的目标)
+        echo "开始编译型号 [$TNAME]..."
+        make $TNAME
         
         # 移动编译产物
         sudo mv -f $TRUNK_DIR/images/*.trx /opt/images/

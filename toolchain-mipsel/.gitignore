@@ -29,6 +29,8 @@ maintainer/package-versions
 *.tar*
 *.zip
 *.xz
+# 例外：保留预编译工具链压缩包
+!mipsel-linux-uclibc.tar.xz
 *.7zip
 
 # Temporaries
