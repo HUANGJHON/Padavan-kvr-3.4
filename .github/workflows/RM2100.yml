@@ -37,8 +37,13 @@ jobs:
         git clone --depth=1 https://github.com/${GITHUB_REPOSITORY}.git /opt/$REPO_NAME
         # 将源码根目录路径存入环境变量，方便后续步骤使用
         echo "SRC_DIR=/opt/$REPO_NAME" >> $GITHUB_ENV
-        cd /opt/$REPO_NAME/toolchain-mipsel
-        sh dl_toolchain.sh
+        
+        # 下载预编译工具链
+        TOOLCHAIN_ROOT=/opt/$REPO_NAME/toolchain-mipsel/toolchain-3.4.x
+        TOOLCHAIN_URL=https://github.com/vipshmily/Padavan-build/releases/download/toolchain/mipsel-linux-uclibc.tar.xz
+        mkdir -p $TOOLCHAIN_ROOT
+        curl -fSsLo- $TOOLCHAIN_URL | tar Jx -C $TOOLCHAIN_ROOT
+        
         mkdir -p /opt/images/
         
         # ##### 修改内存空间和 storage空间13m
@@ -486,10 +491,19 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_SSOBFS=n" >> .config # simple-obfs混淆插件
         
         #########################################################################################
-        sudo ./clear_tree
-        sudo ./build_firmware_modify $TNAME 0
-        sudo mv -f images/*.trx /opt/images/
-        cp -f .config /opt/images/${TNAME}.config
+        # 切换到项目根目录进行编译
+        cd $SRC_DIR
+        
+        # 添加工具链路径到配置
+        echo "CONFIG_CROSS_COMPILER_ROOT=$SRC_DIR/toolchain-mipsel/toolchain-3.4.x" >> $TRUNK_DIR/.config
+        echo "CONFIG_CCACHE=y" >> $TRUNK_DIR/.config
+        
+        # 编译固件
+        make -C $TRUNK_DIR
+        
+        # 移动编译产物
+        sudo mv -f $TRUNK_DIR/images/*.trx /opt/images/
+        cp -f $TRUNK_DIR/.config /opt/images/${TNAME}.config
         echo "build_time=$(date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
         echo "tag=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
     - name : Upload packages
@@ -509,4 +523,4 @@ jobs:
            `型号.config` 是集成的插件模板
            
         tag_name: ${{ env.tag }}
-        文件: /opt/images/*
+        files: /opt/images/*
