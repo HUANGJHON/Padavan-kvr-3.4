@@ -15,7 +15,7 @@ on:
 env:
   MHZ: 1100               # CPU超频频率 必须为20的倍数
   TNAME: ${{ github.event.inputs.production }}
-  # REPOSITORY_URL 已移除，脚本将直接编译当前仓库的代码
+  # REPOSITORY_URL 已移除
          
 jobs:
   build:
@@ -72,13 +72,15 @@ jobs:
           sudo apt update
           sudo apt install libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev zlib1g-dev automake libtool libltdl-dev
           
-    - name: Clone source code (已修改为直接复制)
+    - name: Clone source code
       run: |
-        # --- 修改开始：解决私有仓库 clone 失败问题 ---
-        # 原代码：git clone --depth=1 $REPOSITORY_URL ${{ env.DIR }}
-        # 新代码：直接将当前 Actions 检出的代码复制到 /opt/rt-n56u
+        # 使用 sudo 复制文件到 /opt 目录
         sudo cp -r . ${{ env.DIR }}
-        # --- 修改结束 ---
+        
+        # --- 关键修复：修改文件权限 ---
+        # 将目录所有权改回当前运行用户，解决 Permission denied 问题
+        sudo chown -R $USER:$GROUPS ${{ env.DIR }}
+        # ---------------------------
         
         cd ${{ env.DIR }}
         sed -i '/cp -f/d' Makefile
