@@ -6,7 +6,8 @@
 # 2. 不再使用 public 目录做任何复制或替换（以后直接改源码）
 # 3. 裁剪（sed + echo）逻辑完整保留（含插件中文注释）
 # 4. 修复 rsync 在 /opt 下权限问题：创建目录后 chown 给 runner
-# 5. 修复：未生成 trx 时，mv images/*.trx 直接报错（改为检查+打印目录）
+# 5. 修复：顶层 make 触发 trunk 目标 111 导致“不编译不出 images”
+#    -> 改为直接调用 trunk/build_firmware 按型号编译，确保生成 images/*.trx
 # =====================================================================
 
 name: Build RM2100 Padavan-3.4
@@ -135,6 +136,13 @@ jobs:
         echo "Storage modification completed."
         ############################################################################################
 
+        # 确保 trunk 下编译脚本存在（你仓库里已看到 build_firmware -> build_firmware_modify）
+        if [ ! -x ./build_firmware ]; then
+          echo "错误：trunk/build_firmware 不存在或不可执行"
+          ls -la .
+          exit 1
+        fi
+
         for m in $TNAME;
         do
         echo "开始编译型号: $m"
@@ -221,7 +229,7 @@ jobs:
 
         echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config              # ZeroTier 内网穿透
         echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n" >> .config               # 阿里 DDNS
-        echo "CONFIG_FIRMWARE_INCLUDE_FRPC=n" >> .config                  # FRP 客户端
+        echo "CONFIG_FIRMWARE_INCLUDE_FRPC=n" >> .config                  # FRP 客户户端
         echo "CONFIG_FIRMWARE_INCLUDE_FRPS=n" >> .config                  # FRP 服务端
         echo "CONFIG_FIRMWARE_INCLUDE_DDNSTO=n" >> .config                # ddnsto
         echo "CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n" >> .config             # WireGuard
@@ -231,26 +239,21 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_IPERF3=y" >> .config                # iperf3
         echo "CONFIG_FIRMWARE_INCLUDE_NAPT66=y" >> .config                # NAPT66 (IPv6 NAT)
 
-        cd /opt/rt-n56u
-        sudo make $m
-        cd /opt/rt-n56u/trunk
+        # ✅ 关键修复：不走顶层 make 的“目标映射”，直接调用 trunk 的 build_firmware 按型号编译
+        sudo ./build_firmware $m
 
-        # -------------------- 修复点：避免 mv 无文件时报错 --------------------
-        # 说明：
-        # 1) 如果没有生成 trx，先打印 images 目录，方便定位问题
-        # 2) 再明确退出（而不是 mv 的迷惑报错）
+        # -------------------- 产物检查与移动 --------------------
         if ls images/*.trx >/dev/null 2>&1; then
           sudo mv -f images/*.trx /opt/images/
         else
           echo "错误：未找到固件文件 images/*.trx"
-          echo "请检查上面 make 输出是否真正开始编译（是否目标型号正确）"
-          echo "当前 images 目录内容如下："
+          echo "当前 images 目录内容如下（如不存在会打印 trunk 目录）："
           ls -la images || true
-          echo "当前 trunk 目录下的 images 子目录是否存在："
+          echo "trunk 目录内容："
           ls -la . || true
           exit 1
         fi
-        # ----------------------------------------------------------------------
+        # --------------------------------------------------------
 
         done
 
