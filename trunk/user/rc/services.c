@@ -611,6 +611,57 @@ void restart_frp(void){
 }
 #endif
 
+#if defined(APP_LUCKY)
+void stop_lucky(void){
+	eval("/usr/bin/lucky.sh","stop");
+}
+
+void start_lucky(void){
+	int lucky_enable = nvram_get_int("lucky_enable");
+	if ( lucky_enable == 1)
+		eval("/usr/bin/lucky.sh","start");
+}
+
+void restart_lucky(void){
+	stop_lucky();
+	start_lucky();
+}
+#endif
+
+#if defined(APP_CLOUDFLARED)
+void stop_cloudflared(void){
+	eval("/usr/bin/cloudflared.sh","stop");
+}
+
+void start_cloudflared(void){
+	int cloudflared_enable = nvram_get_int("cloudflared_enable");
+	if ( cloudflared_enable == 1)
+		eval("/usr/bin/cloudflared.sh","start");
+}
+
+void restart_cloudflared(void){
+	stop_cloudflared();
+	start_cloudflared();
+}
+#endif
+
+#if defined(APP_WXSEND)
+void stop_wxsend(void){
+	eval("/usr/bin/wxsend.sh","stop");
+}
+
+void start_wxsend(void){
+	int wxsend_enable = nvram_get_int("wxsend_enable");
+	if ( wxsend_enable == 1)
+		eval("/usr/bin/wxsend.sh","start");
+}
+
+void restart_wxsend(void){
+	stop_wxsend();
+	start_wxsend();
+}
+#endif
+
 void
 start_httpd(int restart_fw)
 {
@@ -910,6 +961,15 @@ stop_services(int stopall)
 #endif
 #if defined(APP_FRP)
 	stop_frp();
+#endif
+#if defined(APP_LUCKY)
+	stop_lucky();
+#endif
+#if defined(APP_CLOUDFLARED)
+	stop_cloudflared();
+#endif
+#if defined(APP_WXSEND)
+	stop_wxsend();
 #endif
 	stop_networkmap();
 	stop_lltd();
