@@ -4,10 +4,9 @@
 # 说明：
 # 1. 源码直接来自当前私有仓库（actions/checkout）
 # 2. 不再使用 public 目录做任何复制或替换（以后直接改源码）
-# 3. 裁剪（sed + echo）逻辑完整保留
-# 4. 修复 rsync 在 /opt 目录下权限设置失败：
-#    - 创建目录后 chown 给当前 runner 用户
-#    - rsync 禁止改 owner/group，避免 chown/chgrp 报错
+# 3. 裁剪（sed + echo）逻辑完整保留（含插件中文注释）
+# 4. 修复 rsync 在 /opt 下权限问题：创建目录后 chown 给 runner
+# 5. 修复：未生成 trx 时，mv images/*.trx 直接报错（改为检查+打印目录）
 # =====================================================================
 
 name: Build RM2100 Padavan-3.4
@@ -83,7 +82,7 @@ jobs:
     - name: 创建目录
       run: |
         sudo mkdir -p /opt/rt-n56u /opt/images
-        # 关键修复：把目录属主改为当前运行用户（runner），否则 rsync -a 会在 chmod/settime 上失败
+        # 关键：把目录属主改为当前运行用户（runner），避免 rsync chmod/settime 权限问题
         sudo chown -R "$(id -u)":"$(id -g)" /opt/rt-n56u /opt/images
         sudo chmod -R 777 /opt/rt-n56u /opt/images
         echo 开始编译时间 > /opt/images/readme.txt
@@ -101,7 +100,6 @@ jobs:
 
     # ------------------------------------------------------------------
     # 8. 同步源码到编译目录（私有仓库构建的关键点）
-    #    - 禁止 rsync 修改 owner/group，避免权限错误
     # ------------------------------------------------------------------
     - name: 同步源码到编译目录
       run: |
@@ -116,6 +114,7 @@ jobs:
       run: |
         cd /opt/rt-n56u/trunk
 
+        echo "本次编译型号参数 TNAME: ${TNAME}"
         echo "CPU 超频到 ${MHZ} MHz"
         clock=$(echo "obase=16 ; ibase=10 ; (((($MHZ/20)-1)*16+2))" | bc)
         sed -i "554,555s:0xff:0x7ff:g" linux-3.4.x/arch/mips/rt2880/init.c
@@ -138,6 +137,8 @@ jobs:
 
         for m in $TNAME;
         do
+        echo "开始编译型号: $m"
+
         if [ ! -f configs/templates/$m.config ] ; then
           echo "configs/templates/$m.config not found"
           exit 1
@@ -233,7 +234,24 @@ jobs:
         cd /opt/rt-n56u
         sudo make $m
         cd /opt/rt-n56u/trunk
-        sudo mv -f images/*.trx /opt/images/
+
+        # -------------------- 修复点：避免 mv 无文件时报错 --------------------
+        # 说明：
+        # 1) 如果没有生成 trx，先打印 images 目录，方便定位问题
+        # 2) 再明确退出（而不是 mv 的迷惑报错）
+        if ls images/*.trx >/dev/null 2>&1; then
+          sudo mv -f images/*.trx /opt/images/
+        else
+          echo "错误：未找到固件文件 images/*.trx"
+          echo "请检查上面 make 输出是否真正开始编译（是否目标型号正确）"
+          echo "当前 images 目录内容如下："
+          ls -la images || true
+          echo "当前 trunk 目录下的 images 子目录是否存在："
+          ls -la . || true
+          exit 1
+        fi
+        # ----------------------------------------------------------------------
+
         done
 
     # ------------------------------------------------------------------
