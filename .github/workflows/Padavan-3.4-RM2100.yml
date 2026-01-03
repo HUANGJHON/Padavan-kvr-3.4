@@ -74,7 +74,7 @@ jobs:
           
     - name: Clone source code
       run: |
-        # --- 修复 1: 使用 -af 参数复制，保留软链接和文件属性 ---
+        # 使用 -af 参数复制，保留软链接和文件属性，解决 busybox 编译错误
         sudo cp -af . ${{ env.DIR }}
         
         # 修改文件权限，防止 Permission denied
@@ -116,10 +116,6 @@ jobs:
 
         for m in $TNAME;
         do
-        
-        # --- 修复 2: 每次编译前清理目录树，解决 Busybox Config.in 丢失问题 ---
-        sudo ./clear_tree
-        # -------------------------------------------------------------
         
         if [ ! -f configs/templates/$m.config ] ; then
         echo "configs/templates/$m.config not found "
