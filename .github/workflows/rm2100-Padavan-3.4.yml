@@ -1,0 +1,404 @@
+# =====================================================================
+# Padavan 3.4 固件自动编译（私有仓库版本）
+#
+# 说明：
+# 1. 源码直接来自当前私有仓库（actions/checkout）
+# 2. 不再使用 public 目录做任何复制或替换（以后你直接改源码）
+# 3. 你的裁剪（sed + echo）逻辑完整保留（含插件中文注释）
+# 4. 修复 rsync 在 /opt 下权限问题：创建目录后 chown 给 runner
+# 5. 修复工具链问题：
+#    - 自动下载/准备 toolchain-mipsel
+#    - 若 trunk/toolchain.inc 缺失，自动生成（加入 toolchain bin 到 PATH）
+#    - 安装 32 位运行库，避免工具链不可执行
+# 6. 修复 .config 出现 “111:: command not found”：
+#    - 自动清理 .config 前缀行号（如 111:CONFIG_...）
+# =====================================================================
+
+name: Build RM2100 Padavan-3.4
+
+on:
+  workflow_dispatch:
+    inputs:
+      production:
+        description: 设置编译的固件型号（空格分隔，需与 configs/templates/*.config 同名）
+        default: "RM2100"
+        required: false
+      release:
+        description: 是否发布到 Release（yes / no）
+        default: "yes"
+        required: false
+
+env:
+  MHZ: 1100
+  TNAME: ${{ github.event.inputs.production }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # ------------------------------------------------------------------
+    # 1. 拉取当前私有仓库源码
+    # ------------------------------------------------------------------
+    - name: 拉取私有仓库源码
+      uses: actions/checkout@main
+
+    # ------------------------------------------------------------------
+    # 2. 启用 ccache
+    # ------------------------------------------------------------------
+    - name: 启用 ccache
+      uses: hendrikmuhs/ccache-action@main
+      with:
+        key: ${{ github.event.inputs.production }}-3.4
+
+    # ------------------------------------------------------------------
+    # 3. 安装 Go
+    # ------------------------------------------------------------------
+    - name: 安装 Go
+      uses: actions/setup-go@main
+      with:
+        go-version: '1.23'
+        check-latest: true
+        cache: false
+
+    # ------------------------------------------------------------------
+    # 4. 安装 Node.js
+    # ------------------------------------------------------------------
+    - name: 安装 Node.js
+      uses: actions/setup-node@main
+      with:
+        node-version: 22
+        check-latest: true
+
+    # ------------------------------------------------------------------
+    # 5. 生成版本信息
+    # ------------------------------------------------------------------
+    - name: 生成版本信息
+      run: |
+        VERSION=$(TZ='Asia/Shanghai' date +%Y.%m.%d-%H%M)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "DIR=/opt/rt-n56u" >> $GITHUB_ENV
+        echo "NAME=${TNAME}_3.4_$VERSION" >> $GITHUB_ENV
+        echo "TAG=v$VERSION" >> $GITHUB_ENV
+
+    # ------------------------------------------------------------------
+    # 6. 创建目录（并修复权限）
+    # ------------------------------------------------------------------
+    - name: 创建目录
+      run: |
+        sudo mkdir -p /opt/rt-n56u /opt/images
+        # 关键：把目录属主改为当前运行用户（runner），避免 rsync chmod/settime 权限问题
+        sudo chown -R "$(id -u)":"$(id -g)" /opt/rt-n56u /opt/images
+        sudo chmod -R 777 /opt/rt-n56u /opt/images
+
+        echo 开始编译时间 > /opt/images/readme.txt
+        TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S' >> /opt/images/readme.txt
+
+    # ------------------------------------------------------------------
+    # 7. 安装编译依赖（补齐常用依赖 + 32 位兼容库 + fakeroot）
+    # ------------------------------------------------------------------
+    - name: 安装编译依赖
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt update
+        sudo apt install -y \
+          unzip curl wget \
+          build-essential gawk flex bison \
+          autoconf automake autopoint libtool libtool-bin libltdl-dev \
+          gettext gperf python3-docutils \
+          texinfo help2man pkg-config \
+          zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev \
+          libncurses5-dev \
+          ccache fakeroot bc \
+          libc6-i386 lib32stdc++6 lib32z1 \
+          libc6:i386 libstdc++6:i386 zlib1g:i386
+
+    # ------------------------------------------------------------------
+    # 8. 同步源码到编译目录（私有仓库构建的关键点）
+    # ------------------------------------------------------------------
+    - name: 同步源码到编译目录
+      run: |
+        rsync -a --delete --no-owner --no-group ./ /opt/rt-n56u/
+        cd /opt/rt-n56u
+        sed -i '/cp -f/d' Makefile
+
+    # ------------------------------------------------------------------
+    # 9. 准备工具链（必须：否则 mipsel-linux-uclibc-gcc 找不到）
+    # ------------------------------------------------------------------
+    - name: 准备工具链
+      run: |
+        cd /opt/rt-n56u
+
+        if [ ! -d "toolchain-mipsel" ]; then
+          echo "错误：toolchain-mipsel 目录不存在，请确认你的源码仓库包含工具链目录"
+          ls -la
+          exit 1
+        fi
+
+        cd toolchain-mipsel
+
+        # 优先：下载预编译工具链（最快）
+        if [ -f "dl_toolchain.sh" ]; then
+          echo "检测到 dl_toolchain.sh，开始下载预编译工具链..."
+          sh dl_toolchain.sh
+        # 其次：从源码编译工具链（慢）
+        elif [ -x "./clean_toolchain" ] && [ -x "./build_toolchain" ]; then
+          echo "未找到 dl_toolchain.sh，使用 clean_toolchain/build_toolchain 编译工具链..."
+          ./clean_toolchain
+          ./build_toolchain
+        # 兼容部分仓库脚本命名
+        elif [ -x "./clean_sources" ] && [ -x "./build_toolchain" ]; then
+          echo "未找到 dl_toolchain.sh，使用 clean_sources/build_toolchain 编译工具链..."
+          ./clean_sources
+          ./build_toolchain
+        else
+          echo "错误：未找到可用的工具链准备脚本（dl_toolchain.sh / build_toolchain 等）"
+          ls -la
+          exit 1
+        fi
+
+        # 验证工具链是否存在
+        TOOLCHAIN_GCC=$(find /opt/rt-n56u -type f -name 'mipsel-linux-uclibc-gcc' -print -quit || true)
+        if [ -z "$TOOLCHAIN_GCC" ]; then
+          echo "错误：工具链准备完成但仍找不到 mipsel-linux-uclibc-gcc"
+          echo "toolchain-mipsel 目录内容："
+          ls -ლა /opt/rt-n56u/toolchain-mipsel || true
+          exit 1
+        fi
+        echo "找到交叉编译器：$TOOLCHAIN_GCC"
+
+    # ------------------------------------------------------------------
+    # 10. 若 trunk/toolchain.inc 缺失，则自动生成（供 build_firmware source）
+    # ------------------------------------------------------------------
+    - name: 生成 toolchain.inc（若缺失）
+      run: |
+        cd /opt/rt-n56u/trunk
+
+        if [ -f "toolchain.inc" ]; then
+          echo "toolchain.inc 已存在，跳过生成。"
+          exit 0
+        fi
+
+        TOOLCHAIN_GCC=$(find /opt/rt-n56u -type f -name 'mipsel-linux-uclibc-gcc' -print -quit || true)
+        if [ -z "$TOOLCHAIN_GCC" ]; then
+          echo "错误：找不到 mipsel-linux-uclibc-gcc，无法生成 toolchain.inc"
+          exit 1
+        fi
+
+        TOOLCHAIN_BIN=$(dirname "$TOOLCHAIN_GCC")
+        echo "将 toolchain bin 写入 PATH：$TOOLCHAIN_BIN"
+
+        cat > toolchain.inc <<EOF
+# 自动生成的 toolchain.inc（CI 环境使用）
+# 作用：让 build_firmware / Makefile 能找到 mipsel-linux-uclibc-* 工具链
+
+export PATH="$TOOLCHAIN_BIN:\$PATH"
+EOF
+
+        echo "已生成 /opt/rt-n56u/trunk/toolchain.inc："
+        cat toolchain.inc
+
+    # ------------------------------------------------------------------
+    # 11. 编译固件（含完整裁剪逻辑）
+    # ------------------------------------------------------------------
+    - name: 编译固件
+      run: |
+        cd /opt/rt-n56u/trunk
+
+        echo "本次编译型号参数 TNAME: ${TNAME}"
+        echo "CPU 超频到 ${MHZ} MHz"
+
+        # CPU 超频：计算寄存器值（要求 MHZ 为 20 的倍数）
+        clock=$(echo "obase=16 ; ibase=10 ; (((($MHZ/20)-1)*16+2))" | bc)
+        sed -i "554,555s:0xff:0x7ff:g" linux-3.4.x/arch/mips/rt2880/init.c
+        sed -i "554,556s:0xc2:0x$clock:g" linux-3.4.x/arch/mips/rt2880/init.c
+
+        ############################################################################################
+        # RM2100 Storage Modification (80MB Storage / 60MB Tmp)
+        ############################################################################################
+        echo "Executing Storage modification for RM2100..."
+        # 1. 修改内核配置：Storage 分区设为 80MB（0x5000000）
+        sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' configs/boards/RM2100/kernel-3.4.x-5.0.config
+        # 2. 修改 dev_init.sh：/etc/storage 空间限制设为 80M
+        sed -i 's/size_etc="6M"/size_etc="80M"/g' user/scripts/dev_init.sh
+        # 3. 修改 dev_init.sh：/tmp 内存临时目录限制设为 60M
+        sed -i 's/size_tmp="24M"/size_tmp="60M"/g' user/scripts/dev_init.sh
+        # 4. 修改 mtd_storage.sh：保存检查大小设为 80MB 的字节数（83886080）
+        sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' user/scripts/mtd_storage.sh
+        echo "Storage modification completed."
+        ############################################################################################
+
+        # 确保 trunk 下编译脚本存在
+        if [ ! -x ./build_firmware ]; then
+          echo "错误：trunk/build_firmware 不存在或不可执行"
+          ls -la .
+          exit 1
+        fi
+
+        for m in $TNAME;
+        do
+        echo "开始编译型号: $m"
+
+        if [ ! -f configs/templates/$m.config ] ; then
+          echo "configs/templates/$m.config not found"
+          exit 1
+        fi
+
+        # 使用机型模板生成 .config
+        cp -f configs/templates/$m.config .config
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+
+        ############################################################################################
+        # 修复：如果你的 .config 里混入了 “111:” 这种行号前缀，会导致 build_firmware source .config 报错
+        # 这里仅删除行首形如 “数字:” 的前缀（不影响正常 CONFIG_XXX 行）
+        ############################################################################################
+        sed -i -E 's/^[[:space:]]*[0-9]+: ?//g' .config
+        sed -i 's/\r$//' .config
+
+        ############################################################################################
+        # 因不同型号配置功能不一样，所以先把配置项删除，如果你自己要添加其他的，也要写上删除这一条，切记！！！
+        ############################################################################################
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config              # 校园网认证 MENTOHUST
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_SERVER/d' .config   # SoftEther VPN 服务端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CLIENT/d' .config   # SoftEther VPN 客户端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CMD/d' .config      # SoftEther 命令行
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config            # SCUT 校园网客户端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config           # Shadowsocks 客户端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config              # Shadowsocks 服务端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config          # DNSForwarder
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADBYBY/d' .config                # adbyby 广告过滤
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config                  # FRP 客户端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config                  # FRP 服务端
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config               # Tunsafe VPN
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config               # 阿里 DDNS
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNS/d' .config              # SmartDNS
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config                # Srelay
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_KUMASOCKS/d' .config             # Kuma Socks
+        sed -i '/CONFIG_FIRMWARE_CPU_900MHZ/d' .config                    # CPU 900MHz 超频选项
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSOBFS/d' .config                # simple-obfs 混淆
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_V2RAY/d' .config                 # V2Ray
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_XRAY/d' .config                  # Xray
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TROJAN/d' .config                # Trojan
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_KOOLPROXY/d' .config             # KoolProxy
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN/d' .config           # SmartDNS 二进制
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME/d' .config           # AdGuardHome
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_CADDY/d' .config                 # Caddy
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_CADDYBIN/d' .config              # Caddy 二进制
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_WYY/d' .config                   # 网易云解锁
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_WYYBIN/d' .config                # 网易云解锁二进制
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config              # ZeroTier
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DDNSTO/d' .config                # ddnsto
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_WIREGUARD/d' .config             # WireGuard
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALDRIVER/d' .config              # 阿里云盘驱动
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MSD_LITE/d' .config              # MSD_LITE
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_IPERF3/d' .config                # iperf3
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NAPT66/d' .config                # NAPT66 (IPv6 NAT)
+
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config  # OpenSSL 可执行文件
+
+        ######################################################################
+        # 以下选项是定义你需要的功能（y=集成,n=忽略），重新写入到.config文件
+        ######################################################################
+        echo "CONFIG_FIRMWARE_INCLUDE_MENTOHUST=n" >> .config              # 校园网认证
+        echo "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n" >> .config            # SCUT 校园网
+        echo "CONFIG_FIRMWARE_INCLUDE_SSSERVER=n" >> .config              # SS 服务端
+        echo "CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER=n" >> .config          # DNSForwarder
+        echo "CONFIG_FIRMWARE_INCLUDE_TUNSAFE=n" >> .config               # Tunsafe VPN
+        echo "CONFIG_FIRMWARE_INCLUDE_SRELAY=n" >> .config                # Srelay
+        echo "CONFIG_FIRMWARE_CPU_900MHZ=y" >> .config                    # CPU 超频 900MHz（仅部分平台可用）
+
+        echo "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=y" >> .config           # Shadowsocks 客户端
+        echo "CONFIG_FIRMWARE_INCLUDE_SSOBFS=n" >> .config                # simple-obfs 混淆
+        echo "CONFIG_FIRMWARE_INCLUDE_V2RAY=n" >> .config                 # V2Ray
+        echo "CONFIG_FIRMWARE_INCLUDE_XRAY=y" >> .config                  # Xray
+        echo "CONFIG_FIRMWARE_INCLUDE_TROJAN=y" >> .config                # Trojan
+        echo "CONFIG_FIRMWARE_INCLUDE_KUMASOCKS=n" >> .config             # Socks5 服务端（Kuma）
+
+        echo "CONFIG_FIRMWARE_INCLUDE_ADBYBY=y" >> .config                # adbyby 广告过滤
+        echo "CONFIG_FIRMWARE_INCLUDE_KOOLPROXY=n" >> .config             # KoolProxy 广告过滤
+
+        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNS=y" >> .config              # SmartDNS
+        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNSBIN=n" >> .config           # SmartDNS 二进制
+        echo "CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n" >> .config           # AdGuardHome
+
+        echo "CONFIG_FIRMWARE_INCLUDE_CADDY=n" >> .config                 # Caddy 文件/网页服务
+        echo "CONFIG_FIRMWARE_INCLUDE_CADDYBIN=n" >> .config              # Caddy 二进制
+
+        echo "CONFIG_FIRMWARE_INCLUDE_WYY=n" >> .config                   # 网易云音乐解锁
+        echo "CONFIG_FIRMWARE_INCLUDE_WYYBIN=n" >> .config                # 网易云解锁二进制
+
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config              # ZeroTier 内网穿透
+        echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n" >> .config               # 阿里 DDNS
+        echo "CONFIG_FIRMWARE_INCLUDE_FRPC=n" >> .config                  # FRP 客户端
+        echo "CONFIG_FIRMWARE_INCLUDE_FRPS=n" >> .config                  # FRP 服务端
+        echo "CONFIG_FIRMWARE_INCLUDE_DDNSTO=n" >> .config                # ddnsto
+        echo "CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n" >> .config             # WireGuard
+
+        echo "CONFIG_FIRMWARE_INCLUDE_ALDRIVER=n" >> .config              # 阿里云盘驱动
+        echo "CONFIG_FIRMWARE_INCLUDE_MSD_LITE=y" >> .config              # MSD_LITE
+        echo "CONFIG_FIRMWARE_INCLUDE_IPERF3=y" >> .config                # iperf3
+        echo "CONFIG_FIRMWARE_INCLUDE_NAPT66=y" >> .config                # NAPT66 (IPv6 NAT)
+
+        # 使用 fakeroot 编译（更符合 padavan 脚本预期，避免目录被 root 污染）
+        fakeroot ./build_firmware $m
+
+        # -------------------- 产物检查与移动 --------------------
+        if ls images/*.trx >/dev/null 2>&1; then
+          mv -f images/*.trx /opt/images/
+        else
+          echo "错误：未找到固件文件 images/*.trx"
+          echo "当前 images 目录内容如下（如不存在会打印 trunk 目录）："
+          ls -la images || true
+          echo "trunk 目录内容："
+          ls -la . || true
+          exit 1
+        fi
+        # --------------------------------------------------------
+
+        done
+
+    # ------------------------------------------------------------------
+    # 12. 收集编译信息
+    # ------------------------------------------------------------------
+    - name: 收集编译信息
+      run: |
+        cd /opt/images
+        echo 完成编译时间 >> /opt/images/readme.txt
+        TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S' >> /opt/images/readme.txt
+        echo >> /opt/images/readme.txt
+        echo 编译版本 >> /opt/images/readme.txt
+        pushd /opt/rt-n56u
+        git log -1 >> /opt/images/readme.txt
+        popd
+        echo >> /opt/images/readme.txt
+        echo md5校验值 >> /opt/images/readme.txt
+        for i in *.trx; do
+          mv -v "$i" "${i%.*}-${{ env.VERSION }}.trx"
+        done
+        md5sum *.trx >> /opt/images/readme.txt || echo
+        ls -l
+
+    # ------------------------------------------------------------------
+    # 13. 上传 Artifact
+    # ------------------------------------------------------------------
+    - name: 上传 Artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: ${{ env.NAME }}
+        path: /opt/images
+
+    # ------------------------------------------------------------------
+    # 14. 发布 Release
+    # ------------------------------------------------------------------
+    - name: 发布 Release
+      if: ${{ github.event.inputs.release == 'yes' }}
+      uses: softprops/action-gh-release@master
+      with:
+        name: ${{ env.NAME }}
+        tag_name: ${{ env.TAG }}
+        body_path: /opt/images/readme.txt
+        draft: false
+        prerelease: false
+        files: /opt/images/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
