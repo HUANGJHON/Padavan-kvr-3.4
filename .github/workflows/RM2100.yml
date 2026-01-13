@@ -46,12 +46,12 @@ jobs:
         mkdir -p /opt/images/
         
         # ##### 修改内存空间和 storage空间13m
-        # sed -i 's/SIZ=0x0400000/SIZ=0x0d00000/g' /opt/$REPO_NAME/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
+        # sed -i 's/SIZ=0x0400000/SIZ=0x0d00000/g' /opt/$REPO_NAME/trunk/configs/boards/JCG-Q20/kernel-3.4.x.config
         # sed -i 's/size_etc="6M"/size_etc="13M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
         # sed -i 's/size_tmp="24M"/size_tmp="30M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
         # sed -i 's/mtd_part_size=65536/mtd_part_size=13631488/g' /opt/$REPO_NAME/trunk/user/scripts/mtd_storage.sh  
 
-        ##### RM2100 | Storage=80MB | Tmp=60MB #####
+        ##### JCG-Q20 | Storage=80MB | Tmp=60MB #####
         # 1. 修改内核配置：Storage 分区设为 80MB
         # 计算：80 * 1024 * 1024 = 83886080 (十进制) = 0x5000000 (十六进制)
         sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' /opt/$REPO_NAME/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
@@ -66,9 +66,9 @@ jobs:
 
     - name: Build Firmware
       env:
-        TNAME: RM2100
+        TNAME: JCG-Q20-uboot
         KERNEL: 3.4
-        MHZ: 1100  # 定义CPU超频频率，必须为20的倍数
+        MHZ: 880  # 定义CPU超频频率，必须为20的倍数
       run: |
         # 从环境变量中获取源码根目录路径
         SRC_DIR=${{ env.SRC_DIR }}
@@ -455,8 +455,8 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_FRPS=y" >> .config  ## FRPS 服务端 约8k
         echo "CONFIG_FIRMWARE_INCLUDE_WIREGUARD=n" >> .config  ## wireguard 约1M
         echo "CONFIG_FIRMWARE_INCLUDE_TUNSAFE=n" >> .config ## tunsafe（wireguard的TCP方式）
-        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=y" >> .config ## zerotier 约 20k
-        echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=y" >> .config #阿里DDNS ~20k 
+        echo "CONFIG_FIRMWARE_INCLUDE_ZEROTIER=n" >> .config ## zerotier 约 20k
+        echo "CONFIG_FIRMWARE_INCLUDE_ALIDDNS=n" >> .config #阿里DDNS ~20k 
         echo "CONFIG_FIRMWARE_INCLUDE_DDNSTO=n" >> .config #ddnsto 约800k  已删除 /trunk/user/httpd/common.h
         echo "CONFIG_FIRMWARE_INCLUDE_TAILSCALE=n" >> .config #tailscale 约20k
         echo "CONFIG_FIRMWARE_INCLUDE_NATPIERCE=n" >> .config #皎月连 约20k
@@ -464,7 +464,7 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_VNTS=n" >> .config #vnt服务端 约50k
         echo "CONFIG_FIRMWARE_INCLUDE_CLOUDFLARED=y" >> .config #CF的隧道 约50k
         echo "CONFIG_FIRMWARE_INCLUDE_LUCKY=y" >> .config #LUCKY 约50k
-        echo "CONFIG_FIRMWARE_INCLUDE_CLOUDFLARE=y" >> .config #CF-ddns 约50k
+        echo "CONFIG_FIRMWARE_INCLUDE_CLOUDFLARE=n" >> .config #CF-ddns 约50k
         echo "CONFIG_FIRMWARE_INCLUDE_EASYTIER=n" >> .config #EasyTier 约50k
         
         echo "CONFIG_FIRMWARE_INCLUDE_ALIST=n" >> .config #ALIST文件列表 约80k
@@ -474,7 +474,7 @@ jobs:
         echo "CONFIG_FIRMWARE_INCLUDE_WYY=n" >> .config #网易云解锁 约80k 已删除 /trunk/user/httpd/common.h
         echo "CONFIG_FIRMWARE_INCLUDE_BAFA=n" >> .config #巴法云 约90k
         echo "CONFIG_FIRMWARE_INCLUDE_CADDY=n" >> .config #在线文件管理服务不占空间(4.0kb左右)
-        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNS=y" >> .config #smartdns
+        echo "CONFIG_FIRMWARE_INCLUDE_SMARTDNS=n" >> .config #smartdns
         echo "CONFIG_FIRMWARE_INCLUDE_ADGUARDHOME=n" >> .config #adguardhome不占空间(7.2kb左右)
         echo "CONFIG_FIRMWARE_INCLUDE_NETCAT=n" >> .config #nc工具
         echo "CONFIG_FIRMWARE_INCLUDE_MSD_LITE=n" >> .config #MSD_LITE工具
