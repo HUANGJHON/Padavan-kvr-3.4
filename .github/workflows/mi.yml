@@ -1,0 +1,210 @@
+name: MI-RM210
+
+on: 
+  workflow_dispatch:
+
+#设置仓库的读写权限
+permissions:
+  contents: write
+env:
+  TZ: Asia/Shanghai
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install unzip libtool-bin curl cmake gperf gawk flex bison nano xxd fakeroot \
+        cpio git python3-docutils gettext automake autopoint texinfo build-essential help2man \
+        pkg-config zlib1g-dev libgmp3-dev libmpc-dev libmpfr-dev libncurses5-dev libltdl-dev wget
+    - name: Install UPX
+      uses: crazy-max/ghaction-upx@v3
+      with:
+        version: v4.2.4
+        install-only: true
+    - name: Clone source code
+      env:
+        KERNEL: 3.4
+      run: |
+        # 使用变量来获取仓库名称，使脚本更具通用性
+        REPO_NAME=$(basename ${{ github.repository }})
+        git clone --depth=1 https://github.com/${GITHUB_REPOSITORY}.git /opt/$REPO_NAME
+        # 将源码根目录路径存入环境变量，方便后续步骤使用
+        echo "SRC_DIR=/opt/$REPO_NAME" >> $GITHUB_ENV
+        
+        # 解压本地预编译工具链 (已包含在仓库中)
+        TOOLCHAIN_ROOT=/opt/$REPO_NAME/toolchain-mipsel/toolchain-3.4.x
+        mkdir -p $TOOLCHAIN_ROOT
+        tar -Jxf /opt/$REPO_NAME/toolchain-mipsel/mipsel-linux-uclibc.tar.xz -C $TOOLCHAIN_ROOT
+        
+        mkdir -p /opt/images/
+        
+        # ##### 修改内存空间和 storage空间13m
+        # sed -i 's/SIZ=0x0400000/SIZ=0x0d00000/g' /opt/$REPO_NAME/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
+        # sed -i 's/size_etc="6M"/size_etc="13M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
+        # sed -i 's/size_tmp="24M"/size_tmp="30M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
+        # sed -i 's/mtd_part_size=65536/mtd_part_size=13631488/g' /opt/$REPO_NAME/trunk/user/scripts/mtd_storage.sh  
+
+        ##### RM2100 | Storage=80MB | Tmp=60MB #####
+        # 1. 修改内核配置：Storage 分区设为 80MB
+        # 计算：80 * 1024 * 1024 = 83886080 (十进制) = 0x5000000 (十六进制)
+        sed -i 's/SIZ=0x0400000/SIZ=0x5000000/g' /opt/$REPO_NAME/trunk/configs/boards/RM2100/kernel-3.4.x-5.0.config
+        # 2. 修改 dev_init.sh：/etc/storage 空间限制设为 80M
+        sed -i 's/size_etc="6M"/size_etc="80M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
+        # 3. 修改 dev_init.sh：/tmp 内存临时目录限制设为 60M
+        sed -i 's/size_tmp="24M"/size_tmp="60M"/g' /opt/$REPO_NAME/trunk/user/scripts/dev_init.sh
+        # 4. 修改 mtd_storage.sh：保存检查大小设为 80MB 的字节数
+        # 80MB = 83886080 字节
+        sed -i 's/mtd_part_size=65536/mtd_part_size=83886080/g' /opt/$REPO_NAME/trunk/user/scripts/mtd_storage.sh
+
+
+    - name: Build Firmware
+      env:
+        TNAME: RM2100
+        KERNEL: 3.4
+        MHZ: 1100  # 定义CPU超频频率，必须为20的倍数
+      run: |
+        # 从环境变量中获取源码根目录路径
+        SRC_DIR=${{ env.SRC_DIR }}
+        TRUNK_DIR=$SRC_DIR/trunk
+        
+        cd $TRUNK_DIR
+        if [ ! -f configs/templates/$TNAME.config ] ; then
+        echo "configs/templates/$TNAME.config 没有找到 "
+        exit 1
+        fi
+        cp -f configs/templates/$TNAME.config .config
+        
+        ############################################################################################
+        # 新增：CPU超频设置 (已根据您提供的完整路径修正)
+        ############################################################################################
+        echo "CPU超频到${MHZ}mhz"
+        echo "修改CPU频率"
+        # 计算16进制的寄存器值
+        clock=`echo "obase=16 ; ibase=10 ; (((($MHZ/20)-1)*16+2))" | bc`
+        echo "16进制值: $clock"
+        
+        # 根据您提供的完整路径 trunk/linux-3.4.x/arch/mips/rt2880/init.c
+        # 构建绝对路径
+        INIT_C_FILE="$TRUNK_DIR/linux-3.4.x/arch/mips/rt2880/init.c"
+        
+        # 检查文件是否存在，如果不存在则报错退出
+        if [ ! -f "$INIT_C_FILE" ]; then
+            echo "错误：找不到内核初始化文件 $INIT_C_FILE"
+            echo "请检查源码目录结构是否正确。"
+            exit 1
+        fi
+        
+        # 使用绝对路径修改文件
+        sed -i "554,555s:0xff:0x7ff:g" "$INIT_C_FILE"
+        sed -i "554,556s:0xc2:0x$clock:g" "$INIT_C_FILE"
+        echo "CPU频率修改完成。"
+        ############################################################################################
+        
+        sed -i 's/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=n/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE=y/g' .config
+        ################################################################################################
+        ###  清除默认配置###
+        sed -i '/CONFIG_FIRMWARE_ENABLE_IPV6/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_USB/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_UFSD/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_FAT/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_EXFAT/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_EXT2/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_EXT3/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_EXT4/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_XFS/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_FUSE/d' .config
+        sed -i '/CONFIG_FIRMWARE_ENABLE_SWAP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_UVC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_HID/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SERIAL/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_AUDIO/d' .config
+
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_XFRM/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_QOS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_IMQ/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_IFB/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_IPSET/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUN/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NFSD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NFSC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_CIFS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NTFS_3G/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_LPRD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_U2EC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TCPDUMP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_HDPARM/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_PARTED/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMBD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMBD36/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_WINS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SMBD_SYSLOG/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FTPD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_RPL2TP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_EAP_PEAP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DDNS_SSL/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_HTTPS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SFTP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DROPBEAR/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DROPBEAR_FAST_CODE/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENSSH/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENVPN/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSWAN/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENSSL_EXE/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_XUPNPD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MINIDLNA/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FIREFLY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FFMPEG_NEW/d' .config
+
+        
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TRANSMISSION/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TRANSMISSION_WEB_CONTROL/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ARIA/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ARIA_WEB_CONTROL/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_CURL/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DOGCOM/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MINIEAP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NJIT_CLIENT/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NAPT66/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSSERVER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_SERVER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CLIENT/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOFTETHERVPN_CMD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DNSFORWARDER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_VLMCSD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TTYD/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_LRZSZ/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_HTOP/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NANO/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_IPERF3/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_DUMP1090/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_RTL_SDR/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MTR/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SOCAT/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SRELAY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_MENTOHUST/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPC/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_FRPS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TUNSAFE/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_WIREGUARD/d' .config   
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ZEROTIER/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_ALIDDNS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_V2RAY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_XRAY/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_TROJAN/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_SSOBFS/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_NPC/d' .config
+        sed -i '/CONFIG_FIRMWARE_WEBUI_HIDE_VPN/d' .config
+        sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENVPN/d' .config
+        # 新增：删除可能存在的旧超频配置项
+        sed -i '/CONFIG_FIRMWARE_CPU_900MHZ/d' .c
